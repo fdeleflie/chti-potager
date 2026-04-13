@@ -1,0 +1,64 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "A vegetable, fruit or processed product available for sale.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Product name (e.g. Tomate Marmande)" },
+        "category": { "type": "string", "enum": ["Légumes", "Fruits", "Produits transformés"], "description": "Product category" },
+        "unit": { "type": "string", "enum": ["kg", "pièce", "pot"], "description": "Unit of sale" },
+        "price": { "type": "number", "description": "Price per unit" },
+        "isPriceEstimated": { "type": "boolean", "description": "True if price is estimated by weight" },
+        "availability": { "type": "string", "enum": ["En stock", "Bientôt disponible"], "description": "Stock status" },
+        "origin": { "type": "string", "enum": ["Serre", "Plein champ"], "description": "Method of cultivation" },
+        "stock": { "type": "number", "description": "Current quantity in stock" },
+        "traceability": { "type": "string", "description": "Traceability info for processed products" },
+        "imageUrl": { "type": "string", "description": "Product image URL" }
+      },
+      "required": ["name", "category", "unit", "price", "availability", "origin", "stock"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Application configuration settings.",
+      "type": "object",
+      "properties": {
+        "siren": { "type": "string", "description": "SIREN number" },
+        "contactName": { "type": "string", "description": "Farm owner name" },
+        "address": { "type": "string", "description": "Farm address" },
+        "phone": { "type": "string", "description": "Contact phone number" },
+        "logoUrl": { "type": "string", "description": "Logo image URL" },
+        "pickupSlots": { "type": "array", "description": "Available pickup time slots" },
+        "openingHours": { "type": "string", "description": "Opening hours and dates" }
+      }
+    },
+    "User": {
+      "title": "User",
+      "description": "User profile and roles.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "customer"], "description": "User role" }
+      },
+      "required": ["uid", "email", "role"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Product category for filtering.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Category name" },
+        "order": { "type": "number", "description": "Display order" }
+      },
+      "required": ["name"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": { "schema": "Product", "description": "Product catalog" },
+    "/settings/config": { "schema": "Settings", "description": "Global app settings" },
+    "/users/{userId}": { "schema": "User", "description": "User accounts" },
+    "/categories/{categoryId}": { "schema": "Category", "description": "Product categories" }
+  }
+}
