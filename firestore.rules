@@ -68,10 +68,10 @@ service cloud.firestore {
       return hasRequiredFields(['name', 'category', 'unit', 'price', 'availability', 'origin', 'stock']) &&
         data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
         data.category is string && data.category.size() > 0 && data.category.size() < 50 &&
-        data.unit in ["kg", "pièce", "pot", "sachet"] &&
+        data.unit is string && data.unit.size() > 0 && data.unit.size() < 50 &&
         data.price is number && data.price >= 0 &&
         data.availability in ["En stock", "Bientôt disponible"] &&
-        data.origin in ["Serre", "Plein champ"] &&
+        data.origin is string && data.origin.size() > 0 && data.origin.size() < 50 &&
         data.stock is number && data.stock >= 0;
     }
 

@@ -3,16 +3,20 @@ export interface Product {
   name: string;
   description?: string;
   category: string;
-  unit: 'kg' | 'pièce' | 'pot' | 'sachet';
+  unit: string;
   price: number;
   isPriceEstimated: boolean;
   availability: 'En stock' | 'Bientôt disponible';
-  origin: 'Serre' | 'Plein champ';
+  origin: string;
   stock: number;
+  isStockVisible?: boolean;
   traceability?: string;
   imageUrl?: string;
   isDiscountActive?: boolean;
   discountPercentage?: number;
+  discountType?: 'percentage' | 'buyXgetY';
+  buyX?: number;
+  getY?: number;
   isDeleted?: boolean;
 }
 
@@ -38,4 +42,6 @@ export interface Settings {
   rcsCity?: string;
   vatExempt?: boolean;
   insurance?: string;
+  units?: string[];
+  origins?: string[];
 }

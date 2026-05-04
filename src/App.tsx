@@ -76,16 +76,20 @@ const initialProductState: Omit<Product, 'id'> = {
   availability: 'En stock',
   origin: 'Serre',
   stock: 0,
+  isStockVisible: true,
   imageUrl: '',
   isDiscountActive: false,
-  discountPercentage: 0
+  discountPercentage: 0,
+  discountType: 'percentage',
+  buyX: 3,
+  getY: 1
 };
 
 export default function App() {
   const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [settings, setSettings] = useState<Settings | null>(null);
-  const [view, setView] = useState<'catalog' | 'settings' | 'legal' | 'trash'>('catalog');
+  const [view, setView] = useState<'catalog' | 'settings' | 'legal' | 'trash' | 'product_form'>('catalog');
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
 
@@ -93,6 +97,8 @@ export default function App() {
   const [newProduct, setNewProduct] = useState<Omit<Product, 'id'>>(initialProductState);
   const [editingProductId, setEditingProductId] = useState<string | null>(null);
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [newUnitName, setNewUnitName] = useState('');
+  const [newOriginName, setNewOriginName] = useState('');
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [editingSettings, setEditingSettings] = useState<Settings | null>(null);
@@ -103,6 +109,9 @@ export default function App() {
   // Backup/Restore state
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [pendingRestoreData, setPendingRestoreData] = useState<any>(null);
+  
+  // Delete confirmation state
+  const [deleteConfirmation, setDeleteConfirmation] = useState<{type: 'product' | 'category', id: string, name: string} | null>(null);
 
   useEffect(() => {
     const unsubAuth = onAuthStateChanged(auth, (u) => {
@@ -196,13 +205,7 @@ export default function App() {
       toast.error("Impossible de supprimer une catégorie utilisée par des produits.");
       return;
     }
-    try {
-      await deleteDoc(doc(db, 'categories', id));
-      toast.success("Catégorie supprimée !");
-    } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `categories/${id}`);
-      toast.error("Erreur lors de la suppression.");
-    }
+    setDeleteConfirmation({ type: 'category', id, name });
   };
 
   const login = async () => {
@@ -216,8 +219,8 @@ export default function App() {
   };
   const logout = () => signOut(auth);
 
-  const handleSaveSettings = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSaveSettings = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!editingSettings) return;
     try {
       await setDoc(doc(db, 'settings', 'config'), editingSettings);
@@ -225,6 +228,46 @@ export default function App() {
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, 'settings/config');
       toast.error("Erreur lors de la mise à jour des paramètres.");
+    }
+  };
+
+  const handleAddUnit = async () => {
+    const val = newUnitName.trim();
+    if (!val) return;
+    const currentUnits = editingSettings?.units || ['kg', 'pièce', 'pot', 'sachet'];
+    if (currentUnits.includes(val)) {
+      toast.error("Cette unité existe déjà.");
+      return;
+    }
+    const updatedSettings = { ...editingSettings!, units: [...currentUnits, val] };
+    setEditingSettings(updatedSettings);
+    setNewUnitName('');
+    try {
+      await setDoc(doc(db, 'settings', 'config'), updatedSettings);
+      toast.success("Unité ajoutée !");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'settings/config');
+      toast.error("Erreur lors de l'ajout de l'unité.");
+    }
+  };
+
+  const handleAddOrigin = async () => {
+    const val = newOriginName.trim();
+    if (!val) return;
+    const currentOrigins = editingSettings?.origins || ['Serre', 'Plein champ'];
+    if (currentOrigins.includes(val)) {
+      toast.error("Cette méthode existe déjà.");
+      return;
+    }
+    const updatedSettings = { ...editingSettings!, origins: [...currentOrigins, val] };
+    setEditingSettings(updatedSettings);
+    setNewOriginName('');
+    try {
+      await setDoc(doc(db, 'settings', 'config'), updatedSettings);
+      toast.success("Méthode ajoutée !");
+    } catch (error) {
+      handleFirestoreError(error, OperationType.WRITE, 'settings/config');
+      toast.error("Erreur lors de l'ajout de la méthode.");
     }
   };
 
@@ -354,6 +397,22 @@ export default function App() {
     if (isNaN(productToSave.price) || productToSave.price < 0) productToSave.price = 0;
     if (isNaN(productToSave.stock) || productToSave.stock < 0) productToSave.stock = 0;
 
+    // Clear unused promotion data to prevent double promotion
+    if (!productToSave.isDiscountActive) {
+      productToSave.discountPercentage = 0;
+      delete productToSave.buyX;
+      delete productToSave.getY;
+    } else {
+      if (!productToSave.discountType || productToSave.discountType === 'percentage') {
+        delete productToSave.buyX;
+        delete productToSave.getY;
+      } else if (productToSave.discountType === 'buyXgetY') {
+        productToSave.discountPercentage = 0;
+        if (!productToSave.buyX) productToSave.buyX = 3;
+        if (!productToSave.getY) productToSave.getY = 1;
+      }
+    }
+
     try {
       if (editingProductId) {
         await updateDoc(doc(db, 'products', editingProductId), productToSave);
@@ -374,18 +433,38 @@ export default function App() {
     const { id, ...productData } = product;
     setNewProduct(productData);
     setEditingProductId(id);
-    setView('settings');
+    setView('product_form');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleDeleteProduct = async (id: string) => {
-    try {
-      await updateDoc(doc(db, 'products', id), { isDeleted: true });
-      toast.success("Produit déplacé vers la corbeille !");
-    } catch (error) {
-      handleFirestoreError(error, OperationType.UPDATE, `products/${id}`);
-      toast.error("Erreur lors de la suppression.");
+  const handleDeleteProduct = async (id: string, name: string) => {
+    setDeleteConfirmation({ type: 'product', id, name });
+  };
+
+  const confirmDeletion = async () => {
+    if (!deleteConfirmation) return;
+    
+    const { type, id } = deleteConfirmation;
+    
+    if (type === 'product') {
+      try {
+        await updateDoc(doc(db, 'products', id), { isDeleted: true });
+        toast.success("Produit déplacé vers la corbeille !");
+      } catch (error) {
+        handleFirestoreError(error, OperationType.UPDATE, `products/${id}`);
+        toast.error("Erreur lors de la suppression.");
+      }
+    } else if (type === 'category') {
+      try {
+        await deleteDoc(doc(db, 'categories', id));
+        toast.success("Catégorie supprimée !");
+      } catch (error) {
+        handleFirestoreError(error, OperationType.DELETE, `categories/${id}`);
+        toast.error("Erreur lors de la suppression.");
+      }
     }
+    
+    setDeleteConfirmation(null);
   };
 
   const handleRestoreProduct = async (id: string) => {
@@ -505,18 +584,33 @@ export default function App() {
               </div>
 
               <div className="flex justify-center gap-4 border-t border-stone-100 pt-6">
-                <button 
-                  onClick={() => setDisplayMode('grid')}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${displayMode === 'grid' ? 'bg-stone-800 text-white' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'}`}
-                >
-                  <LayoutGrid size={16} /> Grille
-                </button>
-                <button 
-                  onClick={() => setDisplayMode('list')}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${displayMode === 'list' ? 'bg-stone-800 text-white' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'}`}
-                >
-                  <List size={16} /> Liste
-                </button>
+                {isAdmin && (
+                  <button 
+                    onClick={() => {
+                      setView('product_form');
+                      setEditingProductId(null);
+                      setNewProduct(initialProductState);
+                      window.scrollTo({ top: 0, behavior: 'smooth' });
+                    }}
+                    className="flex items-center gap-2 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors bg-green-100 text-green-800 hover:bg-green-200"
+                  >
+                    <Plus size={16} /> Nouveau produit
+                  </button>
+                )}
+                <div className="flex gap-2 ml-auto sm:ml-0">
+                  <button 
+                    onClick={() => setDisplayMode('grid')}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${displayMode === 'grid' ? 'bg-stone-800 text-white' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'}`}
+                  >
+                    <LayoutGrid size={16} /> Grille
+                  </button>
+                  <button 
+                    onClick={() => setDisplayMode('list')}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${displayMode === 'list' ? 'bg-stone-800 text-white' : 'bg-stone-100 text-stone-500 hover:bg-stone-200'}`}
+                  >
+                    <List size={16} /> Liste
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -532,8 +626,12 @@ export default function App() {
             ) : displayMode === 'grid' ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
                 {filteredProducts.map(product => {
-                  const hasDiscount = product.isDiscountActive && product.discountPercentage && product.discountPercentage > 0;
-                  const discountedPrice = hasDiscount ? product.price * (1 - product.discountPercentage! / 100) : product.price;
+                  const hasPercentageDiscount = product.isDiscountActive && (!product.discountType || product.discountType === 'percentage') && product.discountPercentage && product.discountPercentage > 0;
+                  const hasBuyXGetYDiscount = product.isDiscountActive && product.discountType === 'buyXgetY';
+                  const buyX = product.buyX || 3;
+                  const getY = product.getY || 1;
+                  const hasDiscount = hasPercentageDiscount || hasBuyXGetYDiscount;
+                  const discountedPrice = hasPercentageDiscount ? product.price * (1 - product.discountPercentage! / 100) : product.price;
 
                   return (
                   <div 
@@ -541,9 +639,14 @@ export default function App() {
                     onClick={() => setSelectedProduct(product)}
                     className="bg-white rounded-2xl shadow-sm border border-stone-100 overflow-hidden hover:shadow-md transition-shadow flex flex-col relative cursor-pointer group"
                   >
-                    {hasDiscount && (
+                    {hasPercentageDiscount && (
                       <div className="absolute top-2 left-2 bg-red-500 text-white text-xs font-bold px-2 py-1 rounded-md z-10 shadow-sm">
                         -{product.discountPercentage}%
+                      </div>
+                    )}
+                    {hasBuyXGetYDiscount && (
+                      <div className="absolute top-2 left-2 bg-purple-500 text-white text-xs font-bold px-2 py-1 rounded-md z-10 shadow-sm">
+                        {buyX} achetés = {getY} gratuit(s)
                       </div>
                     )}
                     {isAdmin && (
@@ -551,7 +654,7 @@ export default function App() {
                         <button onClick={() => handleEditProduct(product)} className="bg-white/80 p-2 rounded-full text-blue-500 hover:bg-blue-50 hover:text-blue-600 transition-colors">
                           <Pencil size={16} />
                         </button>
-                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteProduct(product.id); }} className="bg-white/80 p-2 rounded-full text-red-500 hover:bg-red-50 hover:text-red-600 transition-colors">
+                        <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteProduct(product.id, product.name); }} className="bg-white/80 p-2 rounded-full text-red-500 hover:bg-red-50 hover:text-red-600 transition-colors">
                           <Trash2 size={16} />
                         </button>
                       </div>
@@ -589,12 +692,17 @@ export default function App() {
                       </p>
                       <div className="flex items-center justify-between mt-auto">
                         <div>
-                          {hasDiscount ? (
+                          {hasPercentageDiscount ? (
                             <div className="flex flex-col">
                               <div className="flex items-center gap-2">
                                 <p className="text-xl font-bold text-red-600">{discountedPrice.toFixed(2)}€</p>
                                 <span className="text-sm text-stone-400 line-through">{product.price.toFixed(2)}€</span>
                               </div>
+                              <span className="text-sm text-stone-500 font-normal">/ {product.unit}</span>
+                            </div>
+                          ) : hasBuyXGetYDiscount ? (
+                            <div className="flex flex-col">
+                              <p className="text-xl font-bold text-purple-600">{product.price.toFixed(2)}€</p>
                               <span className="text-sm text-stone-500 font-normal">/ {product.unit}</span>
                             </div>
                           ) : (
@@ -618,8 +726,12 @@ export default function App() {
             ) : (
               <div className="space-y-3">
                 {filteredProducts.map(product => {
-                  const hasDiscount = product.isDiscountActive && product.discountPercentage && product.discountPercentage > 0;
-                  const discountedPrice = hasDiscount ? product.price * (1 - product.discountPercentage! / 100) : product.price;
+                  const hasPercentageDiscount = product.isDiscountActive && (!product.discountType || product.discountType === 'percentage') && product.discountPercentage && product.discountPercentage > 0;
+                  const hasBuyXGetYDiscount = product.isDiscountActive && product.discountType === 'buyXgetY';
+                  const buyX = product.buyX || 3;
+                  const getY = product.getY || 1;
+                  const hasDiscount = hasPercentageDiscount || hasBuyXGetYDiscount;
+                  const discountedPrice = hasPercentageDiscount ? product.price * (1 - product.discountPercentage! / 100) : product.price;
 
                   return (
                     <div 
@@ -640,11 +752,14 @@ export default function App() {
                       </div>
                       
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <h3 className="font-bold text-stone-800 truncate">{product.name}</h3>
                           <span className="text-[10px] bg-stone-100 text-stone-500 px-1.5 py-0.5 rounded uppercase tracking-wider">{product.category}</span>
-                          {hasDiscount && (
+                          {hasPercentageDiscount && (
                             <span className="bg-red-100 text-red-600 text-[10px] font-bold px-1.5 py-0.5 rounded">-{product.discountPercentage}%</span>
+                          )}
+                          {hasBuyXGetYDiscount && (
+                            <span className="bg-purple-100 text-purple-600 text-[10px] font-bold px-1.5 py-0.5 rounded">{buyX} achetés = {getY} gratuit(s)</span>
                           )}
                         </div>
                         <p className="text-xs text-stone-500 truncate">
@@ -654,10 +769,10 @@ export default function App() {
 
                       <div className="text-right flex flex-col items-end gap-1">
                         <div className="flex items-center gap-2">
-                          {hasDiscount && (
+                          {hasPercentageDiscount && (
                             <span className="text-xs text-stone-400 line-through">{product.price.toFixed(2)}€</span>
                           )}
-                          <p className={`font-bold ${hasDiscount ? 'text-red-600' : 'text-stone-800'}`}>
+                          <p className={`font-bold ${hasPercentageDiscount ? 'text-red-600' : hasBuyXGetYDiscount ? 'text-purple-600' : 'text-stone-800'}`}>
                             {discountedPrice.toFixed(2)}€
                           </p>
                         </div>
@@ -675,7 +790,7 @@ export default function App() {
                           <button onClick={() => handleEditProduct(product)} className="p-2 text-blue-500 hover:bg-blue-50 rounded-full transition-colors">
                             <Pencil size={14} />
                           </button>
-                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteProduct(product.id); }} className="p-2 text-red-500 hover:bg-red-50 rounded-full transition-colors">
+                          <button onClick={(e) => { e.preventDefault(); e.stopPropagation(); handleDeleteProduct(product.id, product.name); }} className="p-2 text-red-500 hover:bg-red-50 rounded-full transition-colors">
                             <Trash2 size={14} />
                           </button>
                         </div>
@@ -685,6 +800,201 @@ export default function App() {
                 })}
               </div>
             )}
+          </motion.div>
+        )}
+
+        {/* PRODUCT FORM VIEW */}
+        {view === 'product_form' && isAdmin && (
+          <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="max-w-4xl mx-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h2 className="text-2xl font-bold text-stone-800 flex items-center gap-2">
+                {editingProductId ? <Pencil className="text-green-600" /> : <Plus className="text-green-600" />}
+                {editingProductId ? "Modifier le produit" : "Créer un nouveau produit"}
+              </h2>
+              <button onClick={() => setView('catalog')} className="text-stone-500 hover:text-stone-800 flex items-center gap-1">
+                <X size={20} /> Fermer
+              </button>
+            </div>
+
+            <div className="bg-white rounded-2xl shadow-sm border border-stone-100 p-6 sm:p-8 mb-6">
+              <form onSubmit={(e) => {
+                handleCreateProduct(e);
+                setView('catalog');
+              }} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-1">Nom du produit</label>
+                    <input type="text" required value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" placeholder="ex: Tomate Marmande" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-1">Catégorie</label>
+                    <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value as any})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none">
+                      {categories.map(cat => (
+                        <option key={cat.id} value={cat.name}>{cat.name}</option>
+                      ))}
+                      {categories.length === 0 && (
+                        <option value="">Aucune catégorie disponible</option>
+                      )}
+                    </select>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-sm font-medium text-stone-700 mb-1">Commentaire / Description (optionnel)</label>
+                    <textarea value={newProduct.description || ''} onChange={e => setNewProduct({...newProduct, description: e.target.value})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" placeholder="ex: Produit bio, cultivé sans pesticides..." rows={2} />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-1">Prix (€)</label>
+                    <input type="number" step="0.01" required value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: parseFloat(e.target.value)})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-1">Unité de vente</label>
+                    <select value={newProduct.unit} onChange={e => setNewProduct({...newProduct, unit: e.target.value})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none">
+                      {(settings?.units || ['kg', 'pièce', 'pot', 'sachet']).map(u => (
+                        <option key={u} value={u}>{u}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-1">Stock disponible</label>
+                    <input type="number" required value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: parseInt(e.target.value, 10) || 0})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" />
+                    <div className="flex items-center gap-2 mt-2">
+                      <input 
+                        type="checkbox" 
+                        id="isStockVisible" 
+                        checked={newProduct.isStockVisible ?? true} 
+                        onChange={e => setNewProduct({...newProduct, isStockVisible: e.target.checked})} 
+                        className="w-4 h-4 text-green-600 rounded border-stone-300 focus:ring-green-500"
+                      />
+                      <label htmlFor="isStockVisible" className="text-xs font-medium text-stone-600">
+                        Afficher la quantité en stock sur la fiche
+                      </label>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-1">Disponibilité</label>
+                    <select value={newProduct.availability} onChange={e => setNewProduct({...newProduct, availability: e.target.value as any})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none">
+                      <option value="En stock">En stock</option>
+                      <option value="Bientôt disponible">Bientôt disponible</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-1">Méthode de culture</label>
+                    <select value={newProduct.origin} onChange={e => setNewProduct({...newProduct, origin: e.target.value})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none">
+                      {(settings?.origins || ['Serre', 'Plein champ']).map(o => (
+                        <option key={o} value={o}>{o}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-1">Image (URL ou Emoji)</label>
+                    <input type="text" value={newProduct.imageUrl || ''} onChange={e => setNewProduct({...newProduct, imageUrl: e.target.value})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" placeholder="https://... ou 🍅" />
+                  </div>
+                  <div className="sm:col-span-2 flex items-center gap-2 mt-2">
+                    <input 
+                      type="checkbox" 
+                      id="isPriceEstimated" 
+                      checked={newProduct.isPriceEstimated} 
+                      onChange={e => setNewProduct({...newProduct, isPriceEstimated: e.target.checked})} 
+                      className="w-4 h-4 text-green-600 rounded border-stone-300 focus:ring-green-500"
+                    />
+                    <label htmlFor="isPriceEstimated" className="text-sm font-medium text-stone-700">
+                      Prix indicatif (ex: vente au poids exact lors du retrait)
+                    </label>
+                  </div>
+                  
+                  <div className="sm:col-span-2 flex flex-col gap-4 mt-2 p-4 bg-stone-50 rounded-lg border border-stone-200">
+                    <div className="flex items-center gap-2">
+                      <input 
+                        type="checkbox" 
+                        id="isDiscountActive" 
+                        checked={newProduct.isDiscountActive || false} 
+                        onChange={e => setNewProduct({...newProduct, isDiscountActive: e.target.checked})} 
+                        className="w-4 h-4 text-green-600 rounded border-stone-300 focus:ring-green-500"
+                      />
+                      <label htmlFor="isDiscountActive" className="text-sm font-medium text-stone-700">
+                        Activer une promotion
+                      </label>
+                    </div>
+                    {newProduct.isDiscountActive && (
+                      <div className="flex flex-col sm:flex-row gap-4 pl-6">
+                        <div className="flex flex-col gap-3">
+                          <div className="flex items-center gap-4">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input 
+                                type="radio" 
+                                name="discountType"
+                                value="percentage"
+                                checked={!newProduct.discountType || newProduct.discountType === 'percentage'}
+                                onChange={() => setNewProduct({...newProduct, discountType: 'percentage'})}
+                                className="w-4 h-4 text-green-600 focus:ring-green-500"
+                              />
+                              <span className="text-sm text-stone-700">Pourcentage de réduction</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                              <input 
+                                type="radio" 
+                                name="discountType"
+                                value="buyXgetY"
+                                checked={newProduct.discountType === 'buyXgetY'}
+                                onChange={() => setNewProduct({...newProduct, discountType: 'buyXgetY'})}
+                                className="w-4 h-4 text-green-600 focus:ring-green-500"
+                              />
+                              <span className="text-sm text-stone-700">X achetés = Y gratuit(s)</span>
+                            </label>
+                          </div>
+                        </div>
+                        
+                        {(!newProduct.discountType || newProduct.discountType === 'percentage') ? (
+                          <div className="flex items-center gap-2">
+                            <label className="text-sm text-stone-600">Réduction (%) :</label>
+                            <input 
+                              type="number" 
+                              min="1" max="99"
+                              value={newProduct.discountPercentage || ''} 
+                              onChange={e => setNewProduct({...newProduct, discountPercentage: parseInt(e.target.value) || 0})} 
+                              className="w-20 p-1 border border-stone-300 rounded focus:ring-2 focus:ring-green-500 outline-none" 
+                            />
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <input 
+                              type="number" 
+                              min="1" max="99"
+                              value={newProduct.buyX || 3} 
+                              onChange={e => setNewProduct({...newProduct, buyX: parseInt(e.target.value) || 3})} 
+                              className="w-16 p-1 border border-stone-300 rounded focus:ring-2 focus:ring-green-500 outline-none text-center" 
+                            />
+                            <span className="text-sm text-stone-600">achetés =</span>
+                            <input 
+                              type="number" 
+                              min="1" max="99"
+                              value={newProduct.getY || 1} 
+                              onChange={e => setNewProduct({...newProduct, getY: parseInt(e.target.value) || 1})} 
+                              className="w-16 p-1 border border-stone-300 rounded focus:ring-2 focus:ring-green-500 outline-none text-center" 
+                            />
+                            <span className="text-sm text-stone-600">gratuit(s)</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div className="pt-4 flex flex-col sm:flex-row gap-4">
+                  <button type="submit" className="w-full sm:w-auto bg-green-700 text-white px-6 py-3 rounded-xl hover:bg-green-800 font-medium flex items-center justify-center gap-2 transition-colors">
+                    {editingProductId ? <Save size={18} /> : <Plus size={18} />} 
+                    {editingProductId ? "Enregistrer les modifications" : "Créer le produit"}
+                  </button>
+                  {editingProductId ? (
+                    <button type="button" onClick={() => { setEditingProductId(null); setNewProduct(initialProductState); setView('catalog'); }} className="w-full sm:w-auto bg-stone-200 text-stone-800 px-6 py-3 rounded-xl hover:bg-stone-300 font-medium flex items-center justify-center gap-2 transition-colors">
+                      Annuler
+                    </button>
+                  ) : (
+                    <button type="button" onClick={addExampleProducts} className="w-full sm:w-auto bg-stone-200 text-stone-800 px-6 py-3 rounded-xl hover:bg-stone-300 font-medium flex items-center justify-center gap-2 transition-colors">
+                      Ajouter des exemples
+                    </button>
+                  )}
+                </div>
+              </form>
+            </div>
           </motion.div>
         )}
 
@@ -756,122 +1066,6 @@ export default function App() {
               )}
             </div>
             
-            <div className="bg-white rounded-2xl shadow-sm border border-stone-100 p-6 sm:p-8 mb-6">
-              <h3 className="text-lg font-bold mb-4 border-b pb-2">{editingProductId ? "Modifier le produit" : "Créer un nouveau produit"}</h3>
-              <form onSubmit={handleCreateProduct} className="space-y-4">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-1">Nom du produit</label>
-                    <input type="text" required value={newProduct.name} onChange={e => setNewProduct({...newProduct, name: e.target.value})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" placeholder="ex: Tomate Marmande" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-1">Catégorie</label>
-                    <select value={newProduct.category} onChange={e => setNewProduct({...newProduct, category: e.target.value as any})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none">
-                      {categories.map(cat => (
-                        <option key={cat.id} value={cat.name}>{cat.name}</option>
-                      ))}
-                      {categories.length === 0 && (
-                        <option value="">Aucune catégorie disponible</option>
-                      )}
-                    </select>
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="block text-sm font-medium text-stone-700 mb-1">Commentaire / Description (optionnel)</label>
-                    <textarea value={newProduct.description || ''} onChange={e => setNewProduct({...newProduct, description: e.target.value})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" placeholder="ex: Produit bio, cultivé sans pesticides..." rows={2} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-1">Prix (€)</label>
-                    <input type="number" step="0.01" required value={newProduct.price} onChange={e => setNewProduct({...newProduct, price: parseFloat(e.target.value)})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-1">Unité de vente</label>
-                    <select value={newProduct.unit} onChange={e => setNewProduct({...newProduct, unit: e.target.value as any})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none">
-                      <option value="kg">Au kilo (kg)</option>
-                      <option value="pièce">À la pièce</option>
-                      <option value="pot">Au pot</option>
-                      <option value="sachet">Au sachet</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-1">Stock disponible</label>
-                    <input type="number" required value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: parseInt(e.target.value, 10) || 0})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-1">Disponibilité</label>
-                    <select value={newProduct.availability} onChange={e => setNewProduct({...newProduct, availability: e.target.value as any})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none">
-                      <option value="En stock">En stock</option>
-                      <option value="Bientôt disponible">Bientôt disponible</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-1">Méthode de culture</label>
-                    <select value={newProduct.origin} onChange={e => setNewProduct({...newProduct, origin: e.target.value as any})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none">
-                      <option value="Serre">Sous serre</option>
-                      <option value="Plein champ">Plein champ</option>
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-stone-700 mb-1">Image (URL ou Emoji)</label>
-                    <input type="text" value={newProduct.imageUrl || ''} onChange={e => setNewProduct({...newProduct, imageUrl: e.target.value})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" placeholder="https://... ou 🍅" />
-                  </div>
-                  <div className="sm:col-span-2 flex items-center gap-2 mt-2">
-                    <input 
-                      type="checkbox" 
-                      id="isPriceEstimated" 
-                      checked={newProduct.isPriceEstimated} 
-                      onChange={e => setNewProduct({...newProduct, isPriceEstimated: e.target.checked})} 
-                      className="w-4 h-4 text-green-600 rounded border-stone-300 focus:ring-green-500"
-                    />
-                    <label htmlFor="isPriceEstimated" className="text-sm font-medium text-stone-700">
-                      Prix indicatif (ex: vente au poids exact lors du retrait)
-                    </label>
-                  </div>
-                  
-                  <div className="sm:col-span-2 flex flex-col sm:flex-row sm:items-center gap-4 mt-2 p-4 bg-stone-50 rounded-lg border border-stone-200">
-                    <div className="flex items-center gap-2">
-                      <input 
-                        type="checkbox" 
-                        id="isDiscountActive" 
-                        checked={newProduct.isDiscountActive || false} 
-                        onChange={e => setNewProduct({...newProduct, isDiscountActive: e.target.checked})} 
-                        className="w-4 h-4 text-green-600 rounded border-stone-300 focus:ring-green-500"
-                      />
-                      <label htmlFor="isDiscountActive" className="text-sm font-medium text-stone-700">
-                        Activer une promotion
-                      </label>
-                    </div>
-                    {newProduct.isDiscountActive && (
-                      <div className="flex items-center gap-2">
-                        <label className="text-sm text-stone-600">Réduction (%) :</label>
-                        <input 
-                          type="number" 
-                          min="1" max="99"
-                          value={newProduct.discountPercentage || ''} 
-                          onChange={e => setNewProduct({...newProduct, discountPercentage: parseInt(e.target.value) || 0})} 
-                          className="w-20 p-1 border border-stone-300 rounded focus:ring-2 focus:ring-green-500 outline-none" 
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-                <div className="pt-4 flex flex-col sm:flex-row gap-4">
-                  <button type="submit" className="w-full sm:w-auto bg-green-700 text-white px-6 py-3 rounded-xl hover:bg-green-800 font-medium flex items-center justify-center gap-2 transition-colors">
-                    {editingProductId ? <Save size={18} /> : <Plus size={18} />} 
-                    {editingProductId ? "Enregistrer les modifications" : "Créer le produit"}
-                  </button>
-                  {editingProductId ? (
-                    <button type="button" onClick={() => { setEditingProductId(null); setNewProduct(initialProductState); }} className="w-full sm:w-auto bg-stone-200 text-stone-800 px-6 py-3 rounded-xl hover:bg-stone-300 font-medium flex items-center justify-center gap-2 transition-colors">
-                      Annuler
-                    </button>
-                  ) : (
-                    <button type="button" onClick={addExampleProducts} className="w-full sm:w-auto bg-stone-200 text-stone-800 px-6 py-3 rounded-xl hover:bg-stone-300 font-medium flex items-center justify-center gap-2 transition-colors">
-                      Ajouter des exemples
-                    </button>
-                  )}
-                </div>
-              </form>
-            </div>
-
             <div className="bg-white rounded-2xl shadow-sm border border-stone-100 p-6 sm:p-8">
               <h3 className="text-lg font-bold mb-4 border-b pb-2">Paramètres de la Ferme & Informations Légales</h3>
               <form onSubmit={handleSaveSettings}>
@@ -890,6 +1084,106 @@ export default function App() {
                   <div className="sm:col-span-2">
                     <label className="block text-sm font-medium text-stone-700 mb-1">Horaires d'ouverture</label>
                     <textarea value={editingSettings?.openingHours || ''} onChange={e => setEditingSettings(prev => prev ? {...prev, openingHours: e.target.value} : null)} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" rows={3} placeholder="Lundi: Fermé&#10;Mardi - Samedi: 9h - 18h" />
+                  </div>
+
+                  <div className="sm:col-span-2 mt-4">
+                    <h4 className="font-semibold text-stone-800 border-b pb-1 mb-2">Paramètres du catalogue</h4>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-sm font-medium text-stone-700 mb-2">Unités de vente</label>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {(editingSettings?.units || ['kg', 'pièce', 'pot', 'sachet']).map(unit => (
+                        <div key={unit} className="flex items-center gap-1 bg-stone-100 text-stone-700 px-3 py-1.5 rounded-full text-sm">
+                          <span>{unit}</span>
+                          <button 
+                            type="button"
+                            onClick={async () => {
+                              const currentUnits = editingSettings?.units || ['kg', 'pièce', 'pot', 'sachet'];
+                              const updatedSettings = { ...editingSettings!, units: currentUnits.filter(u => u !== unit) };
+                              setEditingSettings(updatedSettings);
+                              try {
+                                await setDoc(doc(db, 'settings', 'config'), updatedSettings);
+                              } catch (error) {
+                                handleFirestoreError(error, OperationType.WRITE, 'settings/config');
+                              }
+                            }}
+                            className="text-stone-400 hover:text-red-500 transition-colors"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        value={newUnitName} 
+                        onChange={e => setNewUnitName(e.target.value)} 
+                        className="flex-1 p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" 
+                        placeholder="Nouvelle unité (ex: botte)" 
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddUnit();
+                          }
+                        }}
+                      />
+                      <button 
+                        type="button"
+                        onClick={handleAddUnit}
+                        className="bg-stone-200 text-stone-700 px-4 py-2 rounded-lg hover:bg-stone-300 transition-colors flex items-center gap-2"
+                      >
+                        <Plus size={18} /> Ajouter
+                      </button>
+                    </div>
+                  </div>
+                  <div className="sm:col-span-2 mt-2">
+                    <label className="block text-sm font-medium text-stone-700 mb-2">Méthodes de culture / Origines</label>
+                    <div className="flex flex-wrap gap-2 mb-3">
+                      {(editingSettings?.origins || ['Serre', 'Plein champ']).map(origin => (
+                        <div key={origin} className="flex items-center gap-1 bg-stone-100 text-stone-700 px-3 py-1.5 rounded-full text-sm">
+                          <span>{origin}</span>
+                          <button 
+                            type="button"
+                            onClick={async () => {
+                              const currentOrigins = editingSettings?.origins || ['Serre', 'Plein champ'];
+                              const updatedSettings = { ...editingSettings!, origins: currentOrigins.filter(o => o !== origin) };
+                              setEditingSettings(updatedSettings);
+                              try {
+                                await setDoc(doc(db, 'settings', 'config'), updatedSettings);
+                              } catch (error) {
+                                handleFirestoreError(error, OperationType.WRITE, 'settings/config');
+                              }
+                            }}
+                            className="text-stone-400 hover:text-red-500 transition-colors"
+                          >
+                            <X size={14} />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        value={newOriginName} 
+                        onChange={e => setNewOriginName(e.target.value)} 
+                        className="flex-1 p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" 
+                        placeholder="Nouvelle méthode (ex: Hydroponie)" 
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddOrigin();
+                          }
+                        }}
+                      />
+                      <button 
+                        type="button"
+                        onClick={handleAddOrigin}
+                        className="bg-stone-200 text-stone-700 px-4 py-2 rounded-lg hover:bg-stone-300 transition-colors flex items-center gap-2"
+                      >
+                        <Plus size={18} /> Ajouter
+                      </button>
+                    </div>
                   </div>
 
                   <div className="sm:col-span-2 mt-4">
@@ -1164,12 +1458,19 @@ export default function App() {
                   <div className="flex items-end justify-between">
                     <div>
                       <p className="text-sm text-stone-400 mb-1">Prix au {selectedProduct.unit}</p>
-                      {selectedProduct.isDiscountActive && selectedProduct.discountPercentage ? (
+                      {selectedProduct.isDiscountActive && (!selectedProduct.discountType || selectedProduct.discountType === 'percentage') && selectedProduct.discountPercentage ? (
                         <div className="flex items-center gap-3">
                           <p className="text-3xl font-bold text-red-600">
                             {(selectedProduct.price * (1 - selectedProduct.discountPercentage / 100)).toFixed(2)}€
                           </p>
                           <span className="text-lg text-stone-300 line-through">{selectedProduct.price.toFixed(2)}€</span>
+                        </div>
+                      ) : selectedProduct.isDiscountActive && selectedProduct.discountType === 'buyXgetY' ? (
+                        <div>
+                          <p className="text-3xl font-bold text-purple-600">{selectedProduct.price.toFixed(2)}€</p>
+                          <span className="inline-block mt-1 bg-purple-100 text-purple-600 text-xs font-bold px-2 py-1 rounded">
+                            Promotion : {selectedProduct.buyX || 3} achetés = {selectedProduct.getY || 1} gratuit(s)
+                          </span>
                         </div>
                       ) : (
                         <p className="text-3xl font-bold text-stone-800">{selectedProduct.price.toFixed(2)}€</p>
@@ -1179,10 +1480,12 @@ export default function App() {
                       )}
                     </div>
                     
-                    <div className="text-right">
-                      <p className="text-xs text-stone-400 mb-1">Stock</p>
-                      <p className="text-lg font-bold text-stone-800">{selectedProduct.stock} {selectedProduct.unit}</p>
-                    </div>
+                    {selectedProduct.isStockVisible !== false && (
+                      <div className="text-right">
+                        <p className="text-xs text-stone-400 mb-1">Stock</p>
+                        <p className="text-lg font-bold text-stone-800">{selectedProduct.stock} {selectedProduct.unit}</p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1190,6 +1493,46 @@ export default function App() {
           </motion.div>
         </div>
       )}
+
+      {/* DELETE CONFIRMATION MODAL */}
+      <AnimatePresence>
+        {deleteConfirmation && (
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.95 }} 
+              animate={{ opacity: 1, scale: 1 }} 
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden"
+            >
+              <div className="p-6">
+                <div className="flex items-center gap-3 text-red-600 mb-4">
+                  <AlertTriangle size={24} />
+                  <h3 className="text-xl font-bold">Confirmer la suppression</h3>
+                </div>
+                <p className="text-stone-600 mb-6">
+                  Êtes-vous sûr de vouloir supprimer {deleteConfirmation.type === 'product' ? 'le produit' : 'la catégorie'} <strong>"{deleteConfirmation.name}"</strong> ?
+                  {deleteConfirmation.type === 'product' && " Il sera déplacé vers la corbeille."}
+                  {deleteConfirmation.type === 'category' && " Cette action est définitive."}
+                </p>
+                <div className="flex gap-3">
+                  <button 
+                    onClick={() => setDeleteConfirmation(null)}
+                    className="flex-1 px-4 py-2 bg-stone-100 text-stone-700 hover:bg-stone-200 rounded-lg font-medium transition-colors"
+                  >
+                    Annuler
+                  </button>
+                  <button 
+                    onClick={confirmDeletion}
+                    className="flex-1 px-4 py-2 bg-red-600 text-white hover:bg-red-700 rounded-lg font-medium transition-colors"
+                  >
+                    Supprimer
+                  </button>
+                </div>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       {/* RESTORE CONFIRMATION MODAL */}
       <AnimatePresence>
