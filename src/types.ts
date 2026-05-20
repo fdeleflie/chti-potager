@@ -9,6 +9,7 @@ export interface Product {
   availability: 'En stock' | 'Bientôt disponible';
   origin: string;
   stock: number;
+  isUnlimited?: boolean;
   isStockVisible?: boolean;
   traceability?: string;
   imageUrl?: string;

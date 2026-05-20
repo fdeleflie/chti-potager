@@ -8,7 +8,7 @@ import { db, auth, googleProvider } from './firebase';
 import { collection, onSnapshot, addDoc, doc, setDoc, updateDoc, deleteDoc, getDocs, getDoc } from 'firebase/firestore';
 import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
 import { Product, Settings, Category } from './types';
-import { Settings as SettingsIcon, Leaf, Plus, Trash2, LogIn, LogOut, Store, Save, Pencil, LayoutGrid, List, X, Info, FolderPlus, Download, Upload, AlertTriangle } from 'lucide-react';
+import { Settings as SettingsIcon, Leaf, Plus, Trash2, LogIn, LogOut, Store, Save, Pencil, LayoutGrid, List, X, Info, FolderPlus, Download, Upload, AlertTriangle, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Toaster, toast } from 'sonner';
 
@@ -76,6 +76,7 @@ const initialProductState: Omit<Product, 'id'> = {
   availability: 'En stock',
   origin: 'Serre',
   stock: 0,
+  isUnlimited: false,
   isStockVisible: true,
   imageUrl: '',
   isDiscountActive: false,
@@ -103,6 +104,7 @@ export default function App() {
   const [editingCategoryName, setEditingCategoryName] = useState('');
   const [editingSettings, setEditingSettings] = useState<Settings | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>('Tous');
+  const [searchQuery, setSearchQuery] = useState('');
   const [displayMode, setDisplayMode] = useState<'grid' | 'list'>('grid');
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
 
@@ -396,6 +398,10 @@ export default function App() {
 
     if (isNaN(productToSave.price) || productToSave.price < 0) productToSave.price = 0;
     if (isNaN(productToSave.stock) || productToSave.stock < 0) productToSave.stock = 0;
+    
+    if (productToSave.isUnlimited) {
+      productToSave.stock = 0;
+    }
 
     // Clear unused promotion data to prevent double promotion
     if (!productToSave.isDiscountActive) {
@@ -519,9 +525,16 @@ export default function App() {
   const activeProducts = products.filter(p => !p.isDeleted);
   const trashedProducts = products.filter(p => p.isDeleted);
 
-  const filteredProducts = (selectedCategory === 'Tous' 
-    ? activeProducts 
-    : activeProducts.filter(p => p.category === selectedCategory)).sort((a, b) => a.name.localeCompare(b.name));
+  const filteredProducts = activeProducts
+    .filter(p => selectedCategory === 'Tous' || p.category === selectedCategory)
+    .filter(p => !searchQuery || p.name.toLowerCase().includes(searchQuery.toLowerCase()))
+    .sort((a, b) => {
+      // First, sort by availability ("En stock" before "Bientôt disponible")
+      if (a.availability === 'En stock' && b.availability !== 'En stock') return -1;
+      if (a.availability !== 'En stock' && b.availability === 'En stock') return 1;
+      // Then, sort alphabetically by name
+      return a.name.localeCompare(b.name);
+    });
 
   return (
     <div className="min-h-screen bg-stone-50 text-stone-900 font-sans">
@@ -571,6 +584,19 @@ export default function App() {
               )}
               <p className="text-stone-600 mb-6">Consultez les disponibilités de nos légumes, fruits et produits transformés.</p>
               
+              <div className="max-w-md mx-auto mb-6 relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <Search size={18} className="text-stone-400" />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Rechercher un produit..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-10 pr-4 py-2 border border-stone-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-green-500 shadow-sm"
+                />
+              </div>
+
               <div className="flex flex-wrap justify-center gap-2 mb-6">
                 {['Tous', ...categories.map(c => c.name)].map(cat => (
                   <button
@@ -616,8 +642,10 @@ export default function App() {
 
             {filteredProducts.length === 0 ? (
               <div className="text-center py-16 bg-white rounded-2xl border border-stone-200 border-dashed">
-                <p className="mb-4 text-stone-500">Le catalogue est vide pour le moment.</p>
-                {isAdmin && (
+                <p className="mb-4 text-stone-500">
+                  {searchQuery ? 'Aucun produit ne correspond à votre recherche.' : 'Le catalogue est vide pour le moment.'}
+                </p>
+                {isAdmin && !searchQuery && (
                   <button onClick={addExampleProducts} className="flex items-center gap-2 mx-auto bg-green-700 text-white px-6 py-3 rounded-xl hover:bg-green-800 transition-colors">
                     <Plus size={20} /> Ajouter des produits d'exemple
                   </button>
@@ -855,19 +883,35 @@ export default function App() {
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-stone-700 mb-1">Stock disponible</label>
-                    <input type="number" required value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: parseInt(e.target.value, 10) || 0})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" />
-                    <div className="flex items-center gap-2 mt-2">
+                    <div className="flex items-center gap-2 mb-2">
                       <input 
                         type="checkbox" 
-                        id="isStockVisible" 
-                        checked={newProduct.isStockVisible ?? true} 
-                        onChange={e => setNewProduct({...newProduct, isStockVisible: e.target.checked})} 
+                        id="isUnlimited" 
+                        checked={newProduct.isUnlimited ?? false} 
+                        onChange={e => setNewProduct({...newProduct, isUnlimited: e.target.checked})} 
                         className="w-4 h-4 text-green-600 rounded border-stone-300 focus:ring-green-500"
                       />
-                      <label htmlFor="isStockVisible" className="text-xs font-medium text-stone-600">
-                        Afficher la quantité en stock sur la fiche
+                      <label htmlFor="isUnlimited" className="text-sm font-medium text-stone-700">
+                        Quantité illimitée (toujours disponible)
                       </label>
                     </div>
+                    {!newProduct.isUnlimited && (
+                      <>
+                        <input type="number" required value={newProduct.stock} onChange={e => setNewProduct({...newProduct, stock: parseInt(e.target.value, 10) || 0})} className="w-full p-2 border border-stone-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none" />
+                        <div className="flex items-center gap-2 mt-2">
+                          <input 
+                            type="checkbox" 
+                            id="isStockVisible" 
+                            checked={newProduct.isStockVisible ?? true} 
+                            onChange={e => setNewProduct({...newProduct, isStockVisible: e.target.checked})} 
+                            className="w-4 h-4 text-green-600 rounded border-stone-300 focus:ring-green-500"
+                          />
+                          <label htmlFor="isStockVisible" className="text-xs font-medium text-stone-600">
+                            Afficher la quantité en stock sur la fiche
+                          </label>
+                        </div>
+                      </>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-stone-700 mb-1">Disponibilité</label>
@@ -1480,7 +1524,7 @@ export default function App() {
                       )}
                     </div>
                     
-                    {selectedProduct.isStockVisible !== false && (
+                    {!selectedProduct.isUnlimited && selectedProduct.isStockVisible !== false && (
                       <div className="text-right">
                         <p className="text-xs text-stone-400 mb-1">Stock</p>
                         <p className="text-lg font-bold text-stone-800">{selectedProduct.stock} {selectedProduct.unit}</p>

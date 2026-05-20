@@ -70,6 +70,7 @@ service cloud.firestore {
         data.category is string && data.category.size() > 0 && data.category.size() < 50 &&
         data.unit is string && data.unit.size() > 0 && data.unit.size() < 50 &&
         data.price is number && data.price >= 0 &&
+        (!('isUnlimited' in data) || data.isUnlimited is bool) &&
         data.availability in ["En stock", "Bientôt disponible"] &&
         data.origin is string && data.origin.size() > 0 && data.origin.size() < 50 &&
         data.stock is number && data.stock >= 0;
